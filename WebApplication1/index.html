@@ -1,0 +1,258 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>JWT Auth & Role Lab</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            max-width: 760px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            line-height: 1.5;
+        }
+
+        .card {
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .row {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+            .row > .card {
+                flex: 1;
+                min-width: 280px;
+            }
+
+        input, button {
+            padding: 0.45rem 0.6rem;
+            margin-top: 0.3rem;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        #statusBar {
+            background: #1e1e1e;
+            color: #4af626;
+            font-family: monospace;
+            padding: 0.75rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0.5rem;
+        }
+
+        th, td {
+            border-bottom: 1px solid #ddd;
+            text-align: left;
+            padding: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Product Store — JWT Auth Lab</h1>
+
+    <!-- Session Header -->
+    <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+            <strong>Session:</strong> <span id="userDisplay">Not logged in (Anonymous)</span>
+        </div>
+        <button id="logoutBtn" onclick="logout()">Logout</button>
+    </div>
+
+    <!-- Live HTTP Status Output for Matrix Verification -->
+    <div id="statusBar">Last API Response: Ready</div>
+
+    <!-- Register & Login Forms -->
+    <div class="row">
+        <div class="card">
+            <h3>1. Register</h3>
+            <form id="registerForm">
+                <div><input id="regUser" placeholder="Username (use 'admin' once)" required /></div>
+                <div><input id="regPass" type="password" placeholder="Password" required /></div>
+                <button type="submit">Register</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>2. Login</h3>
+            <form id="loginForm">
+                <div><input id="loginUser" placeholder="Username" required /></div>
+                <div><input id="loginPass" type="password" placeholder="Password" required /></div>
+                <button type="submit">Login</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Product Creation -->
+    <div class="card">
+        <h3>3. Add Product (Admin Only)</h3>
+        <form id="addProductForm" class="row" style="align-items:center;">
+            <input id="prodName" placeholder="Product Name" required />
+            <input id="prodPrice" type="number" step="0.01" placeholder="Price" required />
+            <button type="submit">Add Product (POST)</button>
+        </form>
+    </div>
+
+    <!-- Product List -->
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3>4. Products (GET is Public)</h3>
+            <button onclick="loadProducts()">Refresh List</button>
+        </div>
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Price</th><th>Action (Admin Only)</th></tr>
+            </thead>
+            <tbody id="productTableBody"></tbody>
+        </table>
+    </div>
+
+    <script>
+    // Match the URL shown in your `dotnet run` terminal output
+        const API_BASE = "http://localhost:5219/api";
+
+    function logStatus(action, status, detail = "") {
+      document.getElementById("statusBar").textContent =
+        `Last API Response: [${action}] -> HTTP ${status} ${detail}`;
+    }
+
+    function updateSessionUI() {
+      const username = localStorage.getItem("username");
+      const role = localStorage.getItem("role");
+      const display = document.getElementById("userDisplay");
+      display.textContent = username ? `${username} (Role: ${role})` : "Not logged in (Anonymous)";
+    }
+
+    // Part B.2: authFetch attaches Bearer token automatically when present
+    async function authFetch(url, options = {}) {
+      const token = localStorage.getItem("jwt_token");
+      const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      };
+
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      return fetch(url, { ...options, headers });
+    }
+
+    // Part B.1: Register Handler
+    document.getElementById("registerForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const username = document.getElementById("regUser").value;
+      const password = document.getElementById("regPass").value;
+
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      logStatus("POST /auth/register", res.status, data.role ? `(Role: ${data.role})` : (data.message || ""));
+      if (res.ok) e.target.reset();
+    });
+
+    // Part B.1: Login Handler (stores token in localStorage)
+    document.getElementById("loginForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const username = document.getElementById("loginUser").value;
+      const password = document.getElementById("loginPass").value;
+
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.token) {
+        localStorage.setItem("jwt_token", data.token);
+        localStorage.setItem("username", data.username);
+        localStorage.setItem("role", data.role);
+        updateSessionUI();
+        logStatus("POST /auth/login", res.status, "(Token saved to localStorage)");
+        e.target.reset();
+      } else {
+        logStatus("POST /auth/login", res.status, data.message || "Unauthorized");
+      }
+    });
+
+    // Part B.3: Logout clears token and updates UI
+    function logout() {
+      localStorage.removeItem("jwt_token");
+      localStorage.removeItem("username");
+      localStorage.removeItem("role");
+      updateSessionUI();
+      logStatus("LOGOUT", "N/A", "(Token cleared from localStorage)");
+    }
+
+    // Public GET list
+    async function loadProducts() {
+      const res = await fetch(`${API_BASE}/products`);
+      const products = await res.json();
+      logStatus("GET /products", res.status, `(${products.length} items)`);
+
+      const tbody = document.getElementById("productTableBody");
+      tbody.innerHTML = products.map(p => `
+        <tr>
+          <td>${p.id}</td>
+          <td>${p.name}</td>
+          <td>$${Number(p.price).toFixed(2)}</td>
+          <td><button onclick="deleteProduct(${p.id})">Delete (DELETE)</button></td>
+        </tr>
+      `).join("");
+    }
+
+    // Admin-only Add Product routed through authFetch
+    document.getElementById("addProductForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = document.getElementById("prodName").value;
+      const price = parseFloat(document.getElementById("prodPrice").value);
+
+      const res = await authFetch(`${API_BASE}/products`, {
+        method: "POST",
+        body: JSON.stringify({ name, price })
+      });
+
+      logStatus("POST /products", res.status);
+      if (res.status === 201) {
+        e.target.reset();
+        loadProducts();
+      }
+    });
+
+    // Admin-only Delete Product routed through authFetch
+    async function deleteProduct(id) {
+      const res = await authFetch(`${API_BASE}/products/${id}`, {
+        method: "DELETE"
+      });
+
+      logStatus(`DELETE /products/${id}`, res.status);
+      if (res.status === 204) {
+        loadProducts();
+      }
+    }
+
+    // Initialize on page load
+    updateSessionUI();
+    loadProducts();
+    </script>
+</body>
+</html>
